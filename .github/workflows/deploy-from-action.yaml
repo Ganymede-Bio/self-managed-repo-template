@@ -19,11 +19,25 @@ jobs:
         runs-on: ubuntu-latest
         environment: ${{ inputs.environment || 'dev' }}
         steps:
+          - name: Checkout code
+            uses: actions/checkout@v4
+
+          - name: Read Ganymede HEAD SHA
+            id: read-sha
+            run: |
+              if [ -f .ganymede-sha ]; then
+                echo "BASE_SHA=$(cat .ganymede-sha)" >> $GITHUB_OUTPUT
+              else
+                echo "Error: .ganymede-sha not found. Run the Pull from Ganymede workflow first."
+                exit 1
+              fi
+
           - name: Commit to Ganymede
-            uses: ganymede-bio/flow-commit-action@v1.1.0
+            uses: ganymede-bio/flow-commit-action@feat/PORT-1714-v2-commits-protocol
             with:
                 environment: ${{ inputs.environment }}
                 ganymede_environment: ${{ vars.GANYMEDE_ENVIRONMENT }}
                 ganymede_subdomain: ${{ vars.GANYMEDE_SUBDOMAIN }}
                 ganymede_api_token: ${{ secrets.GANYMEDE_API_TOKEN }}
                 author_email: ${{ inputs.authorEmail }}
+                base_sha: ${{ steps.read-sha.outputs.BASE_SHA }}
