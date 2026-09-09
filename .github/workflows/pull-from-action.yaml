@@ -36,7 +36,7 @@ jobs:
                 include_lib_files: "true"
 
           - name: Store Ganymede HEAD SHA
-            run: echo "${{ steps.pull.outputs.head_sha }}" > .ganymede-sha
+            run: echo "${{ steps.pull.outputs.head_sha }}" > .ganymede-sha-${{ inputs.environment }}
 
           - name: Commit changes
             id: commit

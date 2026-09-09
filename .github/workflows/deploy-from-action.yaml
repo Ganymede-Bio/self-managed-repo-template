@@ -25,10 +25,11 @@ jobs:
           - name: Read Ganymede HEAD SHA
             id: read-sha
             run: |
-              if [ -f .ganymede-sha ]; then
-                echo "BASE_SHA=$(cat .ganymede-sha)" >> $GITHUB_OUTPUT
+              SHA_FILE=".ganymede-sha-${{ inputs.environment }}"
+              if [ -f "$SHA_FILE" ]; then
+                echo "BASE_SHA=$(cat "$SHA_FILE")" >> $GITHUB_OUTPUT
               else
-                echo "Error: .ganymede-sha not found. Run the Pull from Ganymede workflow first."
+                echo "Error: $SHA_FILE not found. Run the Pull from Ganymede workflow first."
                 exit 1
               fi
 
