@@ -14,10 +14,20 @@ on:
             authorEmail:
                 description: 'Email of the author for the commit that is a Ganymede user'
                 required: true
+
+# Serialize deploys per environment so two runs can't race on the recorded-HEAD
+# write-back below.
+concurrency:
+    group: deploy-ganymede-${{ inputs.environment }}
+    cancel-in-progress: false
+
 jobs:
     detect-changes:
         runs-on: ubuntu-latest
         environment: ${{ inputs.environment || 'dev' }}
+        permissions:
+            contents: write
+            pull-requests: write
         steps:
           - name: Checkout code
             uses: actions/checkout@v4
@@ -34,7 +44,8 @@ jobs:
               fi
 
           - name: Commit to Ganymede
-            uses: ganymede-bio/flow-commit-action@v2.0.0
+            id: ganymede-commit
+            uses: ganymede-bio/flow-commit-action@v2.1.0
             with:
                 environment: ${{ inputs.environment }}
                 ganymede_environment: ${{ vars.GANYMEDE_ENVIRONMENT }}
@@ -42,3 +53,51 @@ jobs:
                 ganymede_api_token: ${{ secrets.GANYMEDE_API_TOKEN }}
                 author_email: ${{ inputs.authorEmail }}
                 base_sha: ${{ steps.read-sha.outputs.BASE_SHA }}
+
+          # A successful commit advances Ganymede's HEAD, so the SHA recorded in
+          # this repo is now stale. Without this step the next deploy sends the
+          # old base_sha and is rejected with a 409 until someone runs a pull and
+          # merges the sync PR.
+          - name: Record new Ganymede HEAD SHA
+            if: steps.ganymede-commit.outputs.commit-sha != ''
+            env:
+                COMMIT_SHA: ${{ steps.ganymede-commit.outputs.commit-sha }}
+                DEPLOY_ENV: ${{ inputs.environment }}
+                GH_TOKEN: ${{ github.token }}
+            run: |
+              # The SHA is interpolated into a commit message, so validate it is
+              # a git object SHA and nothing else.
+              if ! printf '%s' "$COMMIT_SHA" | grep -Eq '^[0-9a-f]{7,64}$'; then
+                echo "Error: commit-sha is not a valid git SHA."
+                exit 1
+              fi
+
+              SHA_FILE=".ganymede-sha-$DEPLOY_ENV"
+              printf '%s\n' "$COMMIT_SHA" > "$SHA_FILE"
+
+              if git diff --quiet -- "$SHA_FILE"; then
+                echo "Recorded HEAD already up to date."
+                exit 0
+              fi
+
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git add "$SHA_FILE"
+              git commit -m "chore: record Ganymede HEAD $COMMIT_SHA for $DEPLOY_ENV"
+
+              if git push origin "HEAD:$GITHUB_REF_NAME"; then
+                echo "Recorded HEAD on $GITHUB_REF_NAME."
+                exit 0
+              fi
+
+              # Branch protection blocks the direct push. Open a PR so the value
+              # is never lost -- but the next deploy is still rejected as stale
+              # until that PR is merged.
+              echo "Direct push rejected; opening a pull request instead."
+              PR_BRANCH="record-ganymede-sha-$DEPLOY_ENV-$GITHUB_RUN_ID"
+              git push origin "HEAD:$PR_BRANCH"
+              gh pr create \
+                --base "$GITHUB_REF_NAME" \
+                --head "$PR_BRANCH" \
+                --title "chore: record Ganymede HEAD for $DEPLOY_ENV" \
+                --body "Deploy run $GITHUB_RUN_ID advanced Ganymede's HEAD to \`$COMMIT_SHA\`. Merge this to keep \`$SHA_FILE\` current -- the next deploy is rejected as stale until you do."
